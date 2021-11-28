@@ -1,0 +1,448 @@
+---
+title: 'Homework 4: graphics practice'
+author:
+  - name: Mei-Chu Chen 
+    url: https://ssp3nc3r.github.io
+    affiliation: Columbia University
+    affiliation_url: https://sps.columbia.edu/faculty/scott-spencer
+date: '`r format(Sys.Date(), "%Y, %B %d")`'
+output: distill::distill_article
+google_analytics: UA-123500360-1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  eval = TRUE,
+	echo = TRUE,
+	error = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+In our previous class demonstrations and homeworks, we practiced exploring CitiBike ride data to gain insights into the bike share's rebalancing efforts. In the process, we gained experience transforming data and mapping data to visual encodings.
+
+First, as a class we practiced using a workflow with CitiBike data to create a new variable, an indicator whether bikes may have been rebalanced. Next, in homework two, we practiced mapping CitiBike ride data onto the three attributes of color: hue, saturation, and luminance. In the process we were able to explore how useage, rebalancing efforts, or both may have changed between 2013 and 2019, and again before and after the pandemic began. This exploration also helped us consider some of the limitations of the particular visualization: it did not consider the effects of rebalancing or bike and docking station availability.
+
+In this assignment, we will try to account for those and other limitations in the visualizations, and in the process gain practice with new data graphics and *explaining* our insights to others.
+
+
+
+# Preliminary setup
+
+
+
+Load libraries to access functions we'll use in this analysis. Of note, if you have not installed these packages, do so outside of this `rmd` file.
+
+
+```{r}
+library(tidyverse) # the usual
+library(geojsonio) # for map data
+library(broom)     # for map data
+library(patchwork) # for organizing multiple graphs
+library(ggthemes)  # collection of graph themes
+theme_set(theme_tufte(base_family = 'sans'))
+```
+
+
+We'll use the same dataset as in our previous homework. Let's load our data and rename variables (as before),
+
+
+```{r}
+setwd('/Users/meizhuchen/Desktop/Columbia-Semester1/5800/Assignment/Assignment4-visual encoding concepts/data/')
+rider_trips <- read_csv("201909-citibike-tripdata.csv")
+rider_trips <- 
+  rider_trips %>% 
+  rename_all(function(x) gsub(" ", "_", x)) %>%
+  rename(start_time = starttime,
+         end_time = stoptime)
+```
+
+
+Previously, we considered that, in general, CitiBike's available data include measures of several attributes for each bike ride. When a bikeshare customer begins their ride, CitiBike measures these attributes, 
+
+```
+bikeid
+start_station_id
+start_station_name
+start_station_longitude
+start_station_latitude
+start_time
+```
+
+For the same record (row in the data), when a bikeshare customer ends their ride, CitiBike measures additional attributes:
+
+```
+end_station_id
+end_station_name
+end_station_longitude
+end_station_latitude
+end_time
+```
+
+We'll also use the variable `usertype`, and the calculated variable `tripduration`. Of note, while CitiBike also records other attributes about the ride (*e.g.*, `birthyear`, `gender`), we'll ignore these here.
+
+Thus, for customer rides, any given ride begins at the same station that the previous ride ended. Described with math, for rides $n \in 1, 2, ... N$ of each bike $b \in 1, 2, ... B$, we can express bike location between rides as
+
+$$
+\textrm{end_station_name}_{b, n} = \textrm{start_station_name}_{b, n+1}  \mid \textrm{normal usage}
+$$
+
+This does not always hold, however, when CitiBike intervenes between rides by removing a bike from a docking station for whatever reason (*e.g.*, rebalancing or repair); CitiBike may redock the bike anywhere or not at all. By combining information for ride $n$ and $n+1$, we can create *intervention* observations and by filtering to only keep transitions where 
+
+$$
+\textrm{end_station_name}_{b, n} \stackrel{?}{\ne} \textrm{start_station_name}_{b, n+1}  \mid \textrm{intervention}
+$$
+
+
+
+# Question 1 --- measuring CitiBike interventions (data transformations)
+
+
+
+Create observations for CitiBike's interventions. To create these, you'll need to perform several data transformations. 
+
+Here's my suggestion. First,  arrange the data by `bikeid` and `start_time`, so that each bike's rides will be ordered in time. Then, group all observations for each `bikeid` together. Within these groupings (by `bikeid`), you'll create a new observation describing the time between rides. Thus, you'll make 1) the `start_` variables of these new observations equal to the previous `end_` variables, 2) the new `end_` variables are equal to the `start_` variables of the next ride.
+
+Now for most of those new observations, the `start_` and `end_` variables will be the same because the bike just stays docked until the next ride. Filter those out, and you'll be left with rides where CitiBike moved the bike between rides. 
+
+Of note, you won't know where the previous ride was from (using only this data), so that's missing data. For this exercise, assume no rebalancing occured before the first ride. Filter those out. Include the variable `usertype` and set its measurement for all these intervention observations to "Citibike". Finally, calculate the time difference between start and end of the transition in units of *hours*, and save as `tripduration`. Hint: you might try coding something like `difftime(end_time, start_time, units = "hours")`. 
+
+Your new data frame should include these variables:
+
+```
+bikeid
+start_station_id
+start_station_name
+start_station_longitude
+start_station_latitude
+start_time
+end_station_id
+end_station_name
+end_station_longitude
+end_station_latitude
+end_time
+usertype
+tripduration
+```
+
+Name your new dataframe as the object `interventions`.
+
+```{r}
+
+# ENTER CODE TO TRANSFORM DATA INTO interventions
+interventions <-
+rider_trips %>% 
+  arrange(bikeid, start_time) %>% 
+  group_by(bikeid) %>% 
+  mutate(n= end_time)%>%mutate(end_time = start_time)%>%mutate(start_time = lag(n))%>%
+  mutate(n= end_station_id)%>%mutate(end_station_id = start_station_id)%>%mutate(start_station_id=lag(n))%>%
+  filter(start_station_id != end_station_id)  %>%
+  mutate(usertype = "Citibike", tripduration = difftime(end_time,start_time, units = "hours")) %>% 
+  subset(select = -c(birth_year, gender, n))
+```
+
+
+How many observations are in your new data frame `interventions`?
+
+
+
+> 48819 observations
+
+
+
+# Question 2 --- visualizing time between rides (visually encoding data)
+
+
+
+Applying the grammar of graphics with `ggplot2`, 1) create a histogram of your calculated `tripduration` in your new data frame `interventions`, 2) layer a red, vertical line onto the histogram that marks `24` hours, and 3) add *explanatory* information including `x` and `y` labels, your main takeaway as a `title`, and a `caption` describing the source of your data.
+
+
+
+```{r}
+  
+# ENTER CODE TO GRAPH YOUR tripduration INTERVENTION DATA
+library(ggplot2)
+v_line <- 24 
+ggplot(data=interventions, aes(x=tripduration), theme_classic()) + geom_histogram(breaks=seq(0,300, by=20))+
+geom_vline(aes(xintercept = v_line),color="red") +
+  theme_bw(15)+
+labs(title="Tripduration time of Citibike", x="Tripduration Time (hr)", y="Numbers", caption ="This is a statistical chart about tripduration time of citibikes after intervention")+
+geom_text(aes(v_line, 20000, label = "24hours", hjust = -0.5,color="red"))
+```
+
+
+
+# Question 3 --- critical thinking
+
+
+
+Does our above method (creating observations when the `end_station_id` of a ride does not match the `start_station_id` of the  consecutive ride) tend to accurately measure how often CitiBike has intervened, or might our method tend to overcount or undercount? Explain.
+
+
+
+> From my point of view, I agree that the method that we used can show a tendency to accurately measure how often CitiBike has intervened, except the situation that some bikes are missing, broken, or maintenance, and in that cases, the time will consume more and we might undercount the bikes have intervened.
+
+
+
+
+# Question 4 --- critical thinking
+
+
+
+Apple Maps estimates that on average a bike ride from the top of Manhattan (Inwood Hill Park) to the bottom of Manhattan (Battery Park) would take about 1.5 hours. And some *bike angels* can ride pretty fast! Obviously CitiBike may intervene to rebalance docking stations, and in our earlier discussions we discussed four ways they try to rebalance. Consider other reasons why CitiBike may intervene. Does your histogram suggest anything about CitiBike's methods and purposes for their interventions?
+
+
+
+> The four intervention ways we discussed are "bike angels","valet schedule","bike trains" and "motorized vehicles", and there are different time span in different intervention ways. To be more specific, "bike angels","valet schedule" and "bike trains" are focused are the narrow neighborhood streets, and less time-consumed. And "motorized vehicles" is for long-distance rebalancing which may cause more time to deliver the bikes. According to the histogram, we can notice the trip-duration time of most of the bikes is not more than 24 hours, which is the number of bikes that has been intervened by the four mentioned methods. However, there are still few bikes, their trip-duration time is more than 24 hrs, and I assume that those are the bikes that are missing, broken, or in the maintenance.
+
+
+
+# Question 5 --- visualize location of interventions (visually encoding data)
+
+
+
+To practice layering encodings onto maps, let's try to uncover high-level patterns in the location of CitiBike interventions.
+
+We might think of these interventions geographically (that is, locations in space). First, to visualize these interventions as locations in space, we'll overlay visual encodings onto a map of Manhattan. We can create the base map from geographic data available at [Beta NYC](https://beta.nyc/products/boundaries-map/), which we convert from the available data structure called a *spatial polygon data frame*, into a regular data frame of which we are familiar. Here's the code:
+
+```{r}
+# identify the filename and location relative to the project directory
+map_file <- "data/betanyc_hoods.geojson"
+
+# save and load the geojson as a spatial polygon data frame
+if( !file.exists(map_file) ) {
+  url <- paste0(
+    "https://ssp3nc3r.github.io/",
+    "20213APAN5800K007/data/betanyc_hoods.geojson"
+    )
+  
+  # below functions in geojsonio package
+  spdf <- geojson_read(url, what = "sp") 
+  geojson_write(spdf, file = map_file)
+  
+} else {
+  spdf <- geojson_read(map_file, what = "sp")
+}
+
+# convert the spatial polygon data frame to tibble (data.frame) for
+# boroughs and neighborhoods using the tidy function (broom package)
+nyc_neighborhoods <- tidy(spdf, region = "neighborhood")
+nyc_boroughs <- tidy(spdf, region = "borough")
+```
+
+Inspect both the spatial polygon data frame, `spdf`, and the two new regular data frames, `nyc_neighborhoods` and `nyc_boroughs` to get a sense of how they are structured.
+
+From these data frames, we draw a base map of Manhattan that also shows its neighborhood boundaries. Review the help file for `geom_polygon`, the function we'll use to map this spatial data onto visual encodings. Again, here's some code to create our base map:
+
+
+```{r}
+p_hoods <- 
+  
+  # initialize graph
+  ggplot() + 
+  
+  # remove most non-data ink
+  theme_void() +
+  
+  # add color for water (behind land polygons)
+  theme(
+    panel.background = element_rect(fill = "lightblue")
+  ) +
+  
+  # define coordinate system and zoom in on Manhattan
+  coord_map(
+    projection = "mercator",
+    xlim = c(-74.03, -73.91),
+    ylim = c(40.695, 40.85)
+  ) +
+  
+  # map boundary data to visual elements (polygons)
+  geom_polygon(
+    data = nyc_neighborhoods,
+    mapping = aes(
+      x = long,
+      y = lat,
+      group = group
+    ),
+    fill = "white",
+    color = "gray",
+    lwd = 0.1
+  ) 
+
+# display the graph
+p_hoods
+```
+
+
+There are many approaches to encode intervention data onto visual variables layered onto the map. Choose one or more visual encodings to layer intervention data onto the map. These may be visually encoded from direct observations in `interventions`, or from transformations or summaries of those observations, or from both.
+
+
+```{r}
+
+# ENTER CODE TO LAYER YOUR INTERVENTION DATA ONTO MAP
+
+p_hoods+
+geom_point(data=interventions, aes(x=start_station_longitude, y=start_station_latitude),alpha=0.1,color="blue")
+
+```
+
+
+
+Explain your choice of visual encodings and how they help you explore patterns in CitiBike interventions.
+
+
+
+> I choose point and transprency to show the patterns of CitiBike interventions. The reason that I choose this way to represent is because we can clearly tell the distribution of the CitiBike interventions. For example, we can tell that most of the CitiBike interventions happened in Manhattan, specially in the downtown and midtown which density of the point are the highest and more saturated.
+
+
+# Question 6 --- combine ride data with CitiBike interventions (data transformation)
+
+
+
+Combine your new observations from `interventions` with the original observed rides in `rider_trips` into a new data frame called `allmoves`.
+
+
+
+```{r}
+
+# ENTER CODE TO COMBINE OR BIND ROWS FROM rider_trips AND interventions
+df1<-rider_trips
+df2<-interventions
+df1<-df1%>%
+  subset(select = -c(birth_year, gender))
+allmoves<-rbind(df1,df2)
+
+```
+
+
+
+# Question 7 --- estimating number of bikes at stations (data transformation)
+
+
+
+Next, let's look more closely at the patterns of bikes available at a station over time. Again, we don't directly have the number of bikes or number of empty of parking spots available at each station at any given time, but we can estimate that information from the above data. With your data frames `rider_trips` and `interventions` (or collectively, `allmoves`), within each `station_id` you can count observed rides (and interventions): each `end_station_id` counts as `+1`, and each `start_station_id` counts as `-1`. 
+
+Then, you can order them in time and use a *cumulative sum* function like `cumsum()`. Because our data arbitrarily begins at the beginning of a month, however, we should not be starting our cumulative counts at `0` (because there were already bikes at the stations). We can account for this by subtracting from the cumulative bikes the minimum at each station over the month: *e.g.*, $\sum b_i - \textrm{min}(\sum b_i)$, where $b_i \in [-1, +1]$.
+
+
+In the step of transforming data, calculate this across time per station for 1) your combined trips and interventions and 2) separately for just interventions.
+
+
+
+```{r}
+
+# ENTER CODE TO TRANSFORM DATA (ACCUMULATED SUMS OF BIKES ENTERING & LEAVING)
+
+new_end = allmoves[,c("end_station_name","end_time", "end_station_id")]
+new_end = rename(new_end, station_id = end_station_id)
+new_end = rename(new_end, time = end_time)
+new_end = rename(new_end, station_name = end_station_name)
+new_end = 
+  new_end %>%
+  mutate(count = 1)
+
+new_start = allmoves[,c("start_station_name","start_time", "start_station_id")]
+new_start = rename(new_start, station_id = start_station_id)
+new_start = rename(new_start, time = start_time)
+new_start = rename(new_start, station_name = start_station_name)
+new_start = 
+  new_start %>%
+  mutate(count = -1)
+
+end_start_new = rbind(new_end, new_start)
+
+end_start_new = 
+  end_start_new %>%
+  group_by(station_id) %>%
+  arrange(time) %>%
+  mutate(cumsum = cumsum(count))
+
+end_start_byid = 
+  end_start_new %>%
+  group_by(station_id) %>% 
+  arrange(time) %>%
+  summarize(station_name=station_name, time = time, cumsum = cumsum - min(cumsum))
+
+new_end2 = interventions[,c("end_station_name","end_time", "end_station_id")]
+new_end2 = rename(new_end2, station_id = end_station_id)
+new_end2 = rename(new_end2, time = end_time)
+new_end2 = rename(new_end2, station_name = end_station_name)
+new_end2 = 
+  new_end2 %>%
+  mutate(count = 1)
+
+new_start2 = interventions[,c("start_station_name","start_time", "start_station_id")]
+new_start2 = rename(new_start2, station_id = start_station_id)
+new_start2 = rename(new_start2, time = start_time)
+new_start2 = rename(new_start2, station_name = start_station_name)
+new_start2 = 
+  new_start2 %>%
+  mutate(count = -1)
+
+end_start_new2 = rbind(new_end2, new_start2)
+
+end_start_new2 = 
+  end_start_new2 %>%
+  group_by(station_id) %>%
+  arrange(time) %>%
+  mutate(cumsum = cumsum(count))
+
+end_start_byid2 = 
+  end_start_new2 %>%
+  group_by(station_id) %>% 
+  arrange(time) %>%
+  summarize(station_name=station_name, time = time, cumsum = cumsum - min(cumsum))
+
+```
+
+
+In the step of visually encoding the transformed data, graph the two cumulative sums of all over time at one particular station: "W 31 St & 7 Ave", which is near Penn Station. Categorically encode the cumulative sum of combined trips and interventions in *black*, and encode the cumulative sum of just interventions in *red*.
+
+
+```{r}
+
+# ENTER CODE TO GRAPH BOTH ACCUMULATED SUMS FOR THE SINGLE STATION
+w1<-end_start_new %>%
+  group_by(station_id) %>% 
+  arrange(time) %>%
+  summarize(station_name="W 31 St & 7 Ave", time = time, cumsum = cumsum - min(cumsum))
+
+w2<-end_start_byid2 %>%
+  group_by(station_id) %>% 
+  arrange(time) %>%
+  summarize(start_station_name="W 31 St & 7 Ave", time = time, cumsum = cumsum - min(cumsum))
+
+ggplot(w1,aes(x=time,y=cumsum)) +
+			geom_line(size =0.3)
+
+ggplot(w2,aes(x=time,y=cumsum, color="red")) +
+			geom_line(size =0.3)
+
+
+```
+
+
+
+
+# Question 8 --- critical thinking 
+
+
+
+Did your graph reveal patterns in bike and docking availability, CitiBike interventions, or relationships between them at the station "W 31 St & 7 Ave", which is located near Penn Station? Explain.
+
+
+
+> Yes, we can clearly tell that when the total number of bikes is high in allmoves graphic, the total number of bikes is also high in the intervention graphic in the meanwhile which means that CitiBike interventions are doing well in the goal of rebalancing the system.
+
+
+
+Annotate your above graph with a `title`, `subtitle`, and other markings to explain your interpretation and insights for CitiBike's executives.
+
+
+
+# Submission --- reproducibility
+
+
+
+Knit your `rmd` file into an `html` file, name the files `lastname-firstname-hw4.rmd` and `lastname-firstname-hw4.html`, and submit both on courseworks.

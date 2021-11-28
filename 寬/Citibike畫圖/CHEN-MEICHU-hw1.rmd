@@ -1,0 +1,227 @@
+---
+title: 'Homework 1: workflow and graphics practice'
+author: 'MEI-CHU, CHEN'
+date: '`r format(Sys.Date(), "%Y, %B %d")`'
+output: distill::distill_article
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  error = FALSE,
+  warning = FALSE)
+```
+
+In our discussion of the Citi Bike case study, we started considering the effect of the pandemic on ridership and rebalancing, and how we might find some insight by looking at data related to other transportation systems in the city.
+
+# Preliminary setup
+
+If you have not already, install the `tidyverse` and `distill` R packages.
+
+Create a directory on your computer for your homework.
+In RStudio, create a project in your homework directory.
+Now, when you import the data you will only need to specify the subdirectory as part of your name.
+This preparatory step helps your work be reproducible.
+
+For this assignment, import data on New York City ridership from <https://new.mta.info/coronavirus/ridership>.
+You'll need to open the website, then click "Download all the data", which will be the csv file you'll use for this homework.
+
+Create a subdirectory called `data` and place the `csv` file you downloaded into it.
+Name it `MTA_recent_ridership_data.csv`.
+
+Load the `tidyverse` library package (which includes `dplyr` and `ggplot2` functions) for your homework:
+
+```{r}
+# enter code to load the libraries here
+library(tidyverse)
+library(distill)
+
+```
+
+# Question 1: importing and summarising
+
+Import the data into a data frame named `d` and show a summary (hint, in your console, after you load the tidyverse library, you can type ? before `read_csv` or `glimpse` to learn more about functions for this purpose):
+
+Use the two functions below to import and summarise your data variables:
+
+```{r}
+# enter code to import and summarise your data frame variables here.
+?read_csv
+?glimpse
+setwd('/Users/meizhuchen/Desktop/Columbia-Semester1/5800/')
+d=read.csv('MTA_recent_ridership_data.csv')
+glimpse(d)
+
+```
+
+# Question 2: tidying
+
+The column or variable names will be difficult to work with as they are currently written.
+First, we will rename variables so the data frame will be easier to work with in code:
+
+```{r}
+new_names <- 
+  paste(
+    rep(c('subway', 'bus', 'lirr', 
+          'mta', 'access_ride', 'bridge_tunnel'), 
+        each = 2), 
+    rep(c("total", "change"), 
+        times = 6), 
+    sep = '_'
+    )
+
+colnames(d) <- c('date', new_names)
+```
+
+Also, notice some of the variables are of the wrong type.
+The variable `Date`, for example, is an array of type `char`.
+Let's change this to a proper `date` type.
+And all the variables with a percentage are also of a type `char`.
+Finally, the now renamed variable `mta_total` is of type char.
+
+Below, explain why variable `mta_total` is of type `char`:
+
+> Write your answer here.
+> The CVS file does not need to define the data type, so it will automatically determine the data type of the variable when importing to the R system.
+> Therefore, the R system determines that variable 'mta_total' is type of 'char' when importing the cvs file since there are some N/A data in this variable, but in fact we hope it is type of 'numeric', so we will change the data type in the data cleaning process.
+
+# Question 3: more tidying
+
+Next, we'll clean the variables holding percentages as a type `char`.
+We'll do this by removing the `%` and recasting the variables, all in one set of piping functions:
+
+```{r}
+d <- d %>% 
+  mutate( date = as.Date(date, format = '%m/%d/%Y') ) %>%
+  mutate( mta_total = as.numeric(mta_total) ) %>%
+  mutate_if( is.character, str_replace_all, pattern = '%', replacement = '' ) %>%
+  mutate_if( is.character, as.numeric )
+```
+
+In R, missing data is represented as `NA`.
+Does your data frame `d` have any missing data?
+If so, where?
+
+> Write your answer here.
+> Yes, there are some missing data in data frame 'd'.
+> In column "Lirr_total", "lirr_change", "mta_total", "mta_change" from the date on 2020-03-01 to 2020-03-31 are all missing data, which means that there is no data of LIRR and Metro-North Road in March 2020.
+
+```{r}
+d%>%
+  mutate(observation= row_number()) %>%
+  pivot_longer(
+    cols=-c(date, observation),
+    names_to = "variable",
+    values_to = "value") %>%
+  ggplot()+
+  geom_raster(
+    mapping = aes(
+      x=observation,
+      y=variable,
+      fill=is.na(value)
+    )
+  )
+
+```
+
+# Question 4: transforming
+
+This dataset was used to visualize several graphics in the New York Times, in the article we reviewed in class: Penney, Veronica.
+*How Coronavirus Has Changed New York City Transit, in One Chart*.
+New York Times, March 8, 2021.
+<https://www.nytimes.com/interactive/2021/03/08/climate/nyc-transit-covid.html>.
+
+The first graphic maps a three-day rolling average of the change in ridership since the lockdown in New York on March 22 for several of the transportation types {`bridge and tunnel traffic`, `Buses`, `Subways`, `LIRR`, `Metro-North`}.
+Let's see how much the three day rolling average visually changes this graphic compared with our non-averaged values.
+
+The best way to encode the raw change for each transportation type requires we transform our data frame from *wide* to *long* format.
+
+More specifically, the data frame currently includes each transportation type as a different variable.
+Instead, we want to have one variable we will call `transportation_type` and each observation will include the type and the remaining information.
+
+Thus, our goal is to make our data frame look something like this:
+
+| date       | transportation_type | change |
+|:-----------|:--------------------|:-------|
+| 2021-09-16 | subway              | -57.6  |
+| 2021-09-16 | bus                 | -57.1  |
+| 2021-09-16 | lirr                | -56    |
+| ...        | ...                 | ...    |
+
+To do that, we will use the function `pivot_longer`.
+Review the help file for this function.
+Now, we need to specify which columns to pivot, and what names to give them.
+
+?pivot_longer
+
+```{r}
+d <- d %>%
+  select( contains(c('date', 'change')) ) %>%
+  rename_with(~ gsub('_change', '', .x) ) %>%
+  # enter the remaining needed code here
+  pivot_longer(-date, names_to = "transportation_type", values_to = "change")
+  
+```
+
+# Question 5: visualizing
+
+Now that we have our data frame `d` in long format, we can create our visual.
+For this visual, we want to only graph the transportation types shown in the NYT article: `bridge_tunnel`, `bus`, `lirr`, `mta`, and `subway`.
+The easiest way to create the graphic will be to filter the other transporation types from the data frame, and graph with the ggplot function and the `geom_line`.
+I've written some code to get you started that you'll need to complete:
+
+? geom_line()
+
+```{r}
+d %>%
+  filter(
+    # enter the remaining code here
+    transportation_type!="access_ride"
+  ) %>%
+
+  ggplot(aes(x=date,y=change,color=transportation_type)) +
+  
+  scale_color_manual(
+    breaks = c('bridge_tunnel', 'bus', 'subway', 'lirr', 'mta'),
+    values = c('#367C9D', '#61A0CA', '#91BBF9', '#993865', '#773452')
+  ) +
+  
+  labs(
+    x = 'Date',
+    y = 'Percent decline from 2019 ridership'
+  )+
+  # enter the remaining code here
+  geom_line(aes(x=date,y=change,color=transportation_type))
+```
+
+# Question 6: basic insights
+
+Which version of the data encodings do you find easier to read --- our version that encodes the actual daily changes for each transportation type or the NYT version that uses a three day rolling average --- and why?
+
+> Write your answer here.
+> In my opinion, the NYT version will be better to see the ridership trend throughout the time, because calculating the three-day rolling average can reduce the impact of random short-term fluctuations within a specific time frame, compare to the actual daily changes version, it will be easier to tell the pattern.
+
+# Question 7: questions requiring more exploration
+
+The NYT article did not include changes in ridership for the Citi Bike bike share.
+If we graphed the changes in Citi Bike bike rides alongside the transportation types we just graphed, how do you think the changes Citi Bike rides would compare with these other transporation types and why?
+
+> Write your answer here.
+> If we graphed the changes in Citi Bike rides alongside the transportation types, I suppose that the Citi Bike rides decline percent would reach its highest point in March 2020.
+> Due to COVID, no one was willing to go out at that time, but the decline should be slower than other transportations because people were more willing to ride Citi Bike since it's not in a confined space.
+> Besides, Citi Bike also offers mental health benefits.
+> Biking allows people to reduce stress, anxiety and serves as an effective antidepressant, especially during the pandemic period.
+> In addition, I think the factor that affects Citi Bike rides more is the weather.
+> For example, when it rains or snows, riding a bicycle is relatively troublesome, so the decline percent will also be higher on these specific days.
+
+# Question 8: Preparing a reproducible communication
+
+Knit your answers in this r markdown file into an `html` file.
+Submit into courseworks both files (the `lastname-firstname-hw1.rmd` and the knitted `lastname-firstname-hw1.html`).
+We should be able to reproduce your `html` file just by opening your `rmd` file and knitting.
+
+install.packages("knitr") library(knitr)

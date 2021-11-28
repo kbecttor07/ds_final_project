@@ -1,0 +1,392 @@
+---
+title: 'Homework 2: graphics practice'
+author: 'Chen, Meichu'
+date: '`r format(Sys.Date(), "%Y, %B %d")`'
+output: distill::distill_article
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  error = FALSE,
+  warning = FALSE)
+```
+
+
+
+# Preliminary
+
+
+
+For this homework assignment, we'll continue exploring data related to our Citi Bike case study as a way to practice the concepts we've been discussing in class. 
+
+In our third discussion, we briefly considered an exploratory visualization of activity and docking station (im)balance, conducted in 2013 by Columbia University's Center for Spatial Research. [https://c4sr.columbia.edu/projects/citibike-rebalancing-study](https://c4sr.columbia.edu/projects/citibike-rebalancing-study).
+
+As practice in understanding encodings, let's review and reconstruct one of the Center's graphics, titled: "CITI BIKE HOURLY ACTIVITY AND BALANCE". You can download and zoom in on a high resolution pdf of the graphic here: [https://c4sr.columbia.edu/sites/default/files/Activity_Matrix_Composite.pdf](https://c4sr.columbia.edu/sites/default/files/Activity_Matrix_Composite.pdf).
+
+
+
+# Question 1(a) and 1(b) — data types and visual encodings
+
+
+
+What variables and data types have been encoded?
+
+
+
+> The variables are Hours, Station_names, Destinations/Origins, and Activity_gradient; and about the data types, Hours is DateTime or integer, Station_names is string, destinations/origins is also string, and the activity gradient is numeric.
+
+
+
+To what visual channels were those variables mapped?
+
+
+
+> Destinations/Origins is mapping to color channel(hue); Activity gradient is mapping to color(Luminance) channel; Hours is mapping to encoding channel(x-axis); Destinations/Origins is mapping to encoding channel(y-axis)
+
+
+
+
+# Question 2 — coordinate systems
+
+
+
+What type of coordinate system was used for this *Activity and Balance* graphic? Explain.
+
+
+
+> It's similar to the Cartesian coordinates system, but it doesn't fit every rule of the Cartesian coordinates system. For example, the Cartesian coordinate system specifies each point uniquely by a pair of numerical coordinates. However, in this *Activity and Balance* graphic, there are no numerical coordinates but a string(Station_names) and DateTime(Hours) to compare the situations in different stations and in different hours.
+
+
+
+# Question 3 — comparing encoded data
+
+
+
+From our discussions, we listed several ways we can compare visually-encoded data, from more effective to less effective. 
+
+From the Center's *Activity and Balance* graphic, what type(s) of visual comparisons do the encodings enable? Explain.
+
+
+
+> The encodings use the color difference(hue) to show the balance of start or end, if there are more bikes end in the station, the color will tend to be orange; if there are more bikes start in the station, the color will tend to be blue. Besides, it also uses color shade(luminance) to show the activity intensity.
+
+
+
+
+# Question 4 — workflow, tidying and transforming data
+
+
+
+Next, we will re-construct the main components of this graphic together. I'll setup most of the code, and you will fill in the needed gaps (I prompt you with a code comment) as your answers.
+
+To get started, we will first load our main library,
+
+```{r}
+library(tidyverse)
+```
+
+and gather data from the New York City Bike Share data repository: [https://ride.citibikenyc.com/system-data](https://ride.citibikenyc.com/system-data). The first time the code chunk below is run, it will download and save the zip file into your subdirectory you previously created called `data`, if the file hasn't already been saved. Then, we read in the `csv` file into an R data frame object we call `df`:
+
+```{r}
+savefile <- "data/201909-citibike-tripdata.csv"
+
+if (!file.exists(savefile)) {
+  url <- "https://s3.amazonaws.com/tripdata/201909-citibike-tripdata.csv.zip"
+  download.file(url = url, destfile = savefile )
+  }
+
+df <- read_csv(savefile)
+```
+
+Next, we will *tidy* our data frame by renaming variables.
+
+
+```{r}
+df <- df %>% rename_with(~ gsub(' ', '_', .) )
+```
+
+Explore the data frame for missing data. You'll notice that some start and end station names are missing. We cannot reconstruct Columbia University Center for Spatial Research's graphic without these values, so we will filter those `NA` values out of our data frame, keeping in mind that our result is now conditional on the data we still have. We also want to just consider observations with an `end_station_name` that is also used as a `start_station_name`.
+
+```{r}
+df <- 
+  df %>% 
+  filter(
+    if_any(contains('station_name'), ~ !is.na(.)),
+    end_station_name %in% start_station_name
+  )
+```
+
+We need to change the structure of our data so that we can map data values onto the visual encodings used in the Center's graphic.
+
+More specifically, we need to know the number of rides both starting and ending at each station name at each hour of the day, averaged over the number of days in our data set. We'll need to create new variables and pivot some of the data. Specifically, we will create a variable for day of month (`day`) and hour of day (`hour`) from the existing variable `starttime`. Then, we will pivot two variables — `start_station_name` and `end_station_name` into long format, like so:
+
+```{r}
+df <- 
+  df %>%
+  mutate(
+    day = format(starttime, "%d"),
+    hour = format(starttime, "%H")
+  ) %>%
+  pivot_longer(
+    cols = c(start_station_name, end_station_name), 
+    names_to = "start_end",
+    values_to = "station_name"
+  ) %>%
+  mutate(
+    station_name = fct_reorder(station_name, desc(station_name))
+  )
+```
+
+The pivot results in creating separate observations, from the perspective of a docking station (instead of the perspective of a ride), for both types of events: *a bike parking and a bike leaving*.
+
+Are you starting to see that tidying and transforming data are frequently useful prerequisites to making interesting graphics? Hint, the correct answer is "Yes, and this is awesome!"
+
+
+
+>"Yes, and this is awesome!"
+
+
+# Question 5 — transforming data
+
+
+With the pivoted data frame, we can now group our data by station name and hour, and calculate the averages we'll need to map onto visual variables. 
+
+Create new variables `activity` and `balance`, where `activity` holds the average number of rides or observations at each station name each hour and where `balance` hold the average difference between rides beginning at the station and rides ending at the station.
+
+```{r}
+df <- 
+  
+   df%>%
+  group_by(station_name, hour, .drop = FALSE) %>%
+  
+  summarise(
+    activity = n()/30,
+    balance = sum(start_end=="start_station_name")-sum(start_end=="end_station_name")
+  ) %>%
+  
+  ungroup()
+```
+
+Inspect this data frame, and compare with the original imported data frame to understand how each step of the above code changed its structure. Start to consider how we will map these data variables onto the visual variables used in the Center's *Activity and Balance* graphic.
+
+In our third discussion, we considered how to scale data values to map their ranges to the appropriate ranges for each channel of color: hue, chroma (saturation), and luminance. We'll do that next.
+
+
+
+# Question 6 — scaling data
+
+
+
+Complete the code below to properly scale your data variables to the ranges of your visual variables. To get you started, I've written the following code:
+
+```{r}
+library(scales)
+?rescale
+
+df <-
+  df %>%
+  mutate(
+    hue = ifelse(balance < 0, 50, 200),
+    saturation =
+      rescale(
+        abs(balance),
+        from = range(abs(balance), na.rm = TRUE, finite = TRUE),
+        to   = c(0, 100)
+      ),
+    luminance =
+      rescale(
+        activity,
+        from = range(activity, na.rm = TRUE, finite = TRUE),
+        to   = c(0, 100)
+      )
+  )
+```
+
+
+
+# Question 7 — mapping data to visual channels
+
+
+
+Finally, we are ready to map our data onto the visual variables. The Center's *Activity and Balance* graphic resembles a so-called *heatmap*. 
+
+Use the grammar of graphics to create tiles of information, using the function `geom_tile`. To do that, first review the help file for that function, paying particular attention to the aesthetics you'll need to specify. 
+
+Further, to map the individual channels of color, you can use the function `hcl` that's already loaded from `tidyverse`, which works very similarly to (a bit less optimal than) the example I showed you from my R package, `hsluv_hex`. You may also use mine, but that will require you to install it.
+
+I've started the code for you below. Add code where prompted.
+
+```{r}
+?hcl
+?geom_tile
+
+p<- 
+  df %>%
+  ggplot(x = hour,y = station_name) +
+  scale_fill_identity() +
+  geom_tile(
+    mapping = aes(
+      x = hour,
+      y = station_name,
+      fill = hcl(h=hue, c=saturation, l=luminance)
+    ),
+    width = 0.95,
+    height = 0.95
+  ) +
+  theme_dark() +
+  theme(
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    plot.background = element_rect(fill = "#333333"),
+    axis.text.x = element_text(color = "#888888", size = 16 / .pt),
+    axis.text.y = element_text(color = "#888888", size =  7 / .pt)
+  ) +
+  labs(x ="", y = "")
+
+
+# The next line of code will save the graphic as a pdf onto your working
+# directory so that you can separateely open and zoom in while reviewing it.
+ggsave("activity_balance.pdf", plot = p, width = 8, height = 40)
+
+p
+```
+
+
+
+# Question 8 — decoding and interpretation: critical thinking
+
+
+
+We've finished roughly reconstructing the Center's Activity and Balance graphic, updated with later data from September 2019, six years after the original graphic but still before the pandemic. We find that the patterns originally described by the Center still show up. Review their description of the Activity and Balance graphic.
+
+Notice that the Center's description of its graphic and data do not, however, discuss whether empty and full docking stations, and rebalancing efforts by Citi Bike, have any effect on the patterns they describe.
+
+How might 1) empty and full docking stations and 2) CitiBike rebalancing bikes affect the visual patterns in our graphic?
+
+
+
+>The empty and full docking stations will truly affect visual patterns in our graphic, and so does CitiBike rebalancing bikes. First of all, the empty and full docking stations means there will be no bikes for someone who needs them to ride in the start station, and the full docking stations means there is no place for people who want to stop the bike, it will lose the balance so the color of the graphic will not be that continuous than before. On the other hand, if CitiBike bikes rebalancing, the color of the graphic should be more continuous than the original one since there are more bikes in the empty station for people to use, and there are more empty places for people to stop.
+
+
+
+
+# Bonus — advanced practice
+
+
+
+Citi Bike has monthly data up to the present, though they have changed a few of the variable names in the csv files. Repeat the above importing, tidying, transforming, and visualizing for data last month, September 2021 (post pandemic).
+
+Compare the patterns you see in the graphic for September 2021 with the above graphic for September 2019. Explain how the patterns differ (on a high level), and your best reasoning as to why.
+
+
+
+```{r}
+# hint, most of the code is identical to the above code
+library(tidyverse)
+
+savefile2 <- "data/JC-202109-citibike-tripdata.csv"
+
+#if (!file.exists(savefile)) {
+#  url <- "https://s3.amazonaws.com/tripdata/JC-202109-citibike-tripdata.csv.zip"
+#  download.file(url = url, destfile = savefile )
+#  }
+
+df2 <- read_csv(savefile2)
+View(df2)
+df2 <- df2 %>% rename_with(~ gsub(' ', '_', .) )
+
+df2 <- 
+  df2 %>% 
+  filter(
+    if_any(contains('station_name'), ~ !is.na(.)),
+    end_station_name %in% start_station_name
+  )
+
+df2 <- 
+  df2 %>%
+  mutate(
+    day = format(started_at, "%d"),
+    hour = format(started_at, "%H")
+  ) %>%
+  pivot_longer(
+    cols = c(start_station_name, end_station_name), 
+    names_to = "start_end",
+    values_to = "station_name"
+  ) %>%
+  mutate(
+    station_name = fct_reorder(station_name, desc(station_name))
+  )
+
+df2 <- 
+  
+   df2%>%
+  group_by(station_name, hour, .drop = FALSE) %>%
+  
+  summarise(
+    activity = n()/30,
+    balance = sum(start_end=="start_station_name")-sum(start_end=="end_station_name")
+  ) %>%
+  
+  ungroup()
+
+library(scales)
+?rescale
+
+df2 <-
+  df2 %>%
+  mutate(
+    hue = ifelse(balance < 0, 50, 200),
+    saturation =
+      rescale(
+        abs(balance),
+        from = range(abs(balance), na.rm = TRUE, finite = TRUE),
+        to   = c(0, 100)
+      ),
+    luminance =
+      rescale(
+        activity,
+        from = range(activity, na.rm = TRUE, finite = TRUE),
+        to   = c(0, 100)
+      )
+  )
+
+p2<- 
+  df2 %>%
+  ggplot(x = hour,y = station_name) +
+  scale_fill_identity() +
+  geom_tile(
+    mapping = aes(
+      x = hour,
+      y = station_name,
+      fill = hcl(h=hue, c=saturation, l=luminance)
+    ),
+    width = 0.95,
+    height = 0.95
+  ) +
+  theme_dark() +
+  theme(
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    plot.background = element_rect(fill = "#333333"),
+    axis.text.x = element_text(color = "#888888", size = 16 / .pt),
+    axis.text.y = element_text(color = "#888888", size =  7 / .pt)
+  ) +
+  labs(x ="", y = "")
+
+ggsave("activity_balance2.pdf", plot = p2, width = 8, height = 40)
+
+p2
+```
+
+
+
+> The graphic in 2021/09 is more continuous than the one in 2019/09. The reason might cause this change might be the Citibike company made the effort to rebalance the bike on certain stations which made it more balanced than before.  
+
+
+# Knit and submit
+
+
+
+Knit your completed r markdown file (this one) into an html file, name the files `` and `` respectively. Then, submit both files onto canvas.
